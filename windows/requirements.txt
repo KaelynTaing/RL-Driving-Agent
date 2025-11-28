@@ -1,6 +1,0 @@
-gymnasium
-carla==0.9.16
-torch
-numpy
-matplotlib
-opencv-python

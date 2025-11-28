@@ -1,0 +1,22 @@
+name: autodriving2d
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - matplotlib
+  - scipy
+  - jupyter
+  - pip:
+      - gymnasium
+      - Box2D
+      - stable-baselines3
+      - pygame
+      - tqdm
+      - opencv-python
+      - moviepy
+      - torch
+      - tensorboard
