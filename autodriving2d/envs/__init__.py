@@ -1,1 +1,1 @@
-from autodriving2d.envs.grid_world import GridWorldEnv
+from autodriving2d.envs.city_driver import CityDrive

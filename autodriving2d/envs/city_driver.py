@@ -93,7 +93,7 @@ class FrictionDetector(contactListener):
             obj.tiles.add(tile)
             if not tile.road_visited:
                 tile.road_visited = True
-                self.env.reward += 1000.0 / len(self.env.track)
+                self.env.reward += 400.0 / len(self.env.track)
                 self.env.tile_visited_count += 1
 
                 # Lap is considered completed if enough % of the track was covered
@@ -530,32 +530,35 @@ class CityDrive(gym.Env, EzPickle):
             self.car.fuel_spent = 0.0
             step_reward = self.reward - self.prev_reward
             self.prev_reward = self.reward
-            if self.tile_visited_count == len(self.track) or self.new_lap:
-                # Termination due to finishing lap
-                terminated = True
-                info["lap_finished"] = True
+            # if self.tile_visited_count == len(self.track) or self.new_lap:
+            #     # Termination due to finishing lap
+            #     terminated = True
+            #     info["lap_finished"] = True
             x, y = self.car.hull.position
             if abs(x) > PLAYFIELD or abs(y) > PLAYFIELD:
                 terminated = True
                 info["lap_finished"] = False
                 step_reward = -100
+
             # if (False): # when car touches grass
             #     step_reward -= 100 # major penalty
             #     terminated = True
 
+            # goal check
+            if self.end_pos is not None:
+                # distance squared from goal
+                dist_sq = (self.car.hull.position[0] - self.end_pos[0]) ** 2 + (self.car.hull.position[1] - self.end_pos[1]) ** 2
+                goal_radius = TRACK_WIDTH * 1.2 # check
+                # print(dist_sq,goal_radius)
+                if dist_sq < goal_radius ** 2:
+                    # print("should end now")
+                    step_reward = 1000
+                    self.reward += 1000.0   # goal reward
+                    terminated = True       # end episode
+
         if self.render_mode == "human":
             self.render()
         
-        # goal check
-        if self.end_pos is not None:
-            # distance squared from goal
-            dist_sq = (self.car.hull.position[0] - self.end_pos[0]) ** 2 + (self.car.hull.position[1] - self.end_pos[1]) ** 2
-            goal_radius = TRACK_WIDTH * 1.2 # check
-            # print(dist_sq,goal_radius)
-            if dist_sq < goal_radius ** 2:
-                # print("should end now")
-                step_reward += 1000.0   # goal reward
-                terminated = True       # end episode
 
         return self.state, step_reward, terminated, truncated, info
 
