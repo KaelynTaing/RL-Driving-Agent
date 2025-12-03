@@ -561,7 +561,7 @@ class CityDrive(gym.Env, EzPickle):
         if self.render_mode == "human":
             self.render()
         
-        print(self.car.hull.position[0],self.car.hull.position[1])
+        # print(self.car.hull.position[0],self.car.hull.position[1])
         return self.state, step_reward, terminated, truncated, info
 
     def render(self):
