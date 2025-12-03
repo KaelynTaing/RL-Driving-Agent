@@ -93,7 +93,7 @@ class FrictionDetector(contactListener):
             obj.tiles.add(tile)
             if not tile.road_visited:
                 tile.road_visited = True
-                self.env.reward += 400.0 / len(self.env.track)
+                self.env.reward += 1000.0 / len(self.env.track)
                 self.env.tile_visited_count += 1
 
                 # Lap is considered completed if enough % of the track was covered
@@ -271,9 +271,11 @@ class CityDrive(gym.Env, EzPickle):
             self.action_space = spaces.Discrete(5)
             # do nothing, right, left, gas, brake
 
-        self.observation_space = spaces.Box(
-            low=0, high=255, shape=(STATE_H, STATE_W, 3), dtype=np.uint8
-        )
+        self.observation_space = spaces.Dict({
+            "image_array": spaces.Box(low=0, high=255, shape=(STATE_H, STATE_W, 3), dtype=np.uint8), # 255 x 255 image
+            "agent_loc"  : spaces.Box(-PLAYFIELD, PLAYFIELD, shape=(2,), dtype=np.float32),   # [x, y] coordinates
+            "target_loc" : spaces.Box(-PLAYFIELD, PLAYFIELD, shape=(2,), dtype=np.float32)    # [x, y] coordinates
+        })
 
         self.render_mode = render_mode
 
@@ -559,7 +561,7 @@ class CityDrive(gym.Env, EzPickle):
         if self.render_mode == "human":
             self.render()
         
-
+        print(self.car.hull.position[0],self.car.hull.position[1])
         return self.state, step_reward, terminated, truncated, info
 
     def render(self):
@@ -628,9 +630,13 @@ class CityDrive(gym.Env, EzPickle):
             self.screen.blit(self.surf, (0, 0))
             pygame.display.flip()
         elif mode == "rgb_array":
-            return self._create_image_array(self.surf, (VIDEO_W, VIDEO_H))
+            return {"image_array":self._create_image_array(self.surf, (VIDEO_W, VIDEO_H)), 
+                    "agent_loc": (self.car.hull.position[0],self.car.hull.position[1]),
+                    "target_loc" : self.end_pos}
         elif mode == "state_pixels":
-            return self._create_image_array(self.surf, (STATE_W, STATE_H))
+            return {"image_array":self._create_image_array(self.surf, (STATE_W, STATE_H)), 
+                    "agent_loc": (self.car.hull.position[0],self.car.hull.position[1]),
+                    "target_loc" : self.end_pos}
         else:
             return self.isopen
 
