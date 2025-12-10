@@ -605,6 +605,15 @@ class CityDrive(gym.Env, EzPickle):
         # First step without action, called from reset() also makes sure its moving
         # make sure its not just continuously braking
 
+        # Penalty if off road
+        on_road = any(
+            self._point_in_poly(car_x, car_y, poly) for poly, _ in self.road_poly
+        )
+
+        speed = np.sqrt(
+            self.car.hull.linearVelocity[0] ** 2 + self.car.hull.linearVelocity[1] ** 2
+        )
+
         # Small push for spending too much time
         step_reward -= 0.05  # Claude: bullying :3
 
@@ -613,8 +622,57 @@ class CityDrive(gym.Env, EzPickle):
             new_dist = np.sqrt(
                 (car_x - self.end_pos[0]) ** 2 + (car_y - self.end_pos[1]) ** 2
             )
-            step_reward += (self.old_dist - new_dist) * 0.5  # reward for progress
+            # step_reward += (self.old_dist - new_dist) * 0.5  # reward for progress
+            progress = self.old_dist - new_dist
+            # Only reward progress if ON ROAD
+            if on_road:
+                step_reward += progress * 1.0  # Strong reward for progress
+            else:
+                # Heavily penalize off-road progress (no shortcuts!)
+                step_reward += progress * 0.1  # 10x less reward off-road
+
             self.old_dist = new_dist
+
+        # Velocity toward goal (encourages moving in right direction)
+        velocity_toward_goal = self._get_velocity_toward_goal()
+        # step_reward += velocity_toward_goal * 0.05
+
+        if on_road:
+            step_reward += velocity_toward_goal * 0.1
+        # step_reward -= 1.0  # changed from -10 then 0.5
+        # else:
+        #     pass
+        # step_reward += 0.05
+        # # Only reward being on road if MOVING toward goal
+        # if velocity_toward_goal > 0.5:  # Only if moving forward
+        #     step_reward += 0.1
+
+        # Road penalties/rewards - MAKE OFF-ROAD VERY EXPENSIVE
+        if not on_road:
+            # Massive penalty that scales with speed (discourage shortcuts)
+            step_reward -= 2.0  # Base penalty
+            step_reward -= speed * 0.5  # Extra penalty for fast off-roading
+        else:
+            # Reward for staying on road
+            step_reward += 0.1
+
+        # Penalize excessive steering or braking (smooth driving)
+        if action == 1 or action == 2:  # steering
+            step_reward -= 0.01
+        # Reward for using gas (encourage forward movement)
+        if action == 3:  # gas
+            step_reward += 0.05
+        if action == 4:  # braking
+            step_reward -= 0.1  # changed from 0.02
+            if speed < 0.5:  # Almost stopped
+                step_reward -= 0.3  # Severe penalty for sitting still with brake
+
+        # Add timeout truncation
+        if self.steps_taken >= self.max_episode_steps:
+            truncated = True
+            step_reward -= 20  # Small penalty for timeout, changed from 10
+
+        self.prev_reward = step_reward
 
         # Goal reached
         # goal_radius = TRACK_WIDTH * 4  # check
@@ -630,45 +688,6 @@ class CityDrive(gym.Env, EzPickle):
                 terminated = True
                 info["goal_reached"] = True
 
-        # Velocity toward goal (encourages moving in right direction)
-        velocity_toward_goal = self._get_velocity_toward_goal()
-        step_reward += velocity_toward_goal * 0.05
-
-        # Penalty if off road
-        on_road = any(
-            self._point_in_poly(car_x, car_y, poly) for poly, _ in self.road_poly
-        )
-        if not on_road:
-            step_reward -= 1.0  # changed from -10 then 0.5
-        else:
-            step_reward += 0.05
-            # Only reward being on road if MOVING toward goal
-            if velocity_toward_goal > 0.5:  # Only if moving forward
-                step_reward += 0.1
-
-        # Penalize excessive steering or braking (smooth driving)
-        if action == 1 or action == 2:  # steering
-            step_reward -= 0.01
-        # Reward for using gas (encourage forward movement)
-        if action == 3:  # gas
-            step_reward += 0.05
-        if action == 4:  # braking
-            step_reward -= 0.2  # changed from 0.02
-
-        # Extra penalty if braking while not moving much
-        speed = np.sqrt(
-            self.car.hull.linearVelocity[0] ** 2 + self.car.hull.linearVelocity[1] ** 2
-        )
-        if speed < 1.0:  # Almost stopped
-            step_reward -= 0.3  # Severe penalty for sitting still with brake
-
-        # Add timeout truncation
-        if self.steps_taken >= self.max_episode_steps:
-            truncated = True
-            step_reward -= 20  # Small penalty for timeout, changed from 10
-
-        self.prev_reward = step_reward
-
         # if self.tile_visited_count == len(self.track) or self.new_lap:
         #     # Termination due to finishing lap
         #     terminated = True
@@ -677,7 +696,7 @@ class CityDrive(gym.Env, EzPickle):
         if abs(x) > PLAYFIELD or abs(y) > PLAYFIELD:
             terminated = True
             info["lap_finished"] = False
-            step_reward = -50
+            step_reward = -100
             # changed from -100 to -50
         # else:
         #     step_reward -= 1.5  # MOOOOOOVE DO SOMETHING
