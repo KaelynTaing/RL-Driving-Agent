@@ -239,8 +239,8 @@ class CityDrive(gym.Env, EzPickle):
         self._init_colors()
 
         # Added With Claude
-        self.max_episode_steps = (1000,)
-        self.steps_taken = (0,)
+        self.max_episode_steps = 1000
+        self.steps_taken = 0
         self.contactListener_keepref = FrictionDetector(self, self.lap_complete_percent)
         self.world = Box2D.b2World((0, 0), contactListener=self.contactListener_keepref)
         self.screen: pygame.Surface | None = None
