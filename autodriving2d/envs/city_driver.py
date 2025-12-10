@@ -1,10 +1,13 @@
-# changes made: 
+# changes made:
 #   completely redesigned _create_track()
 #   added goal checking in step() for early episode returns
+#   changed to discrete action state - dare
+#       Added Goal intersection coloring (always yellow, no normalization)
+#   car is penalized for driving on grass.
 __credits__ = ["Andrea PIERRÉ"]
 
 import math
-
+from typing import List
 import numpy as np
 
 import gymnasium as gym
@@ -218,8 +221,8 @@ class CityDrive(gym.Env, EzPickle):
         verbose: bool = False,
         lap_complete_percent: float = 1.0,
         domain_randomize: bool = False,
-        continuous: bool = True,
-        num_streets: int = 4
+        continuous: bool = False,  # darius edit to be DQN
+        num_streets: int = 4,
     ):
         EzPickle.__init__(
             self,
@@ -228,12 +231,16 @@ class CityDrive(gym.Env, EzPickle):
             lap_complete_percent,
             domain_randomize,
             continuous,
+            num_streets,
         )
         self.continuous = continuous
         self.domain_randomize = domain_randomize
         self.lap_complete_percent = lap_complete_percent
         self._init_colors()
 
+        # Added With Claude
+        self.max_episode_steps = (1000,)
+        self.steps_taken = (0,)
         self.contactListener_keepref = FrictionDetector(self, self.lap_complete_percent)
         self.world = Box2D.b2World((0, 0), contactListener=self.contactListener_keepref)
         self.screen: pygame.Surface | None = None
@@ -251,14 +258,24 @@ class CityDrive(gym.Env, EzPickle):
         self.fd_tile = fixtureDef(
             shape=polygonShape(vertices=[(0, 0), (1, 0), (1, -1), (0, -1)])
         )
-        self.end_pos: tuple | None = None
+        self.end_pos: tuple[int, int] | None = None
+        # list of coordinates for goal intersection polygon. Default none
+        self.end_poly: (
+            List[
+                tuple[np.float32, np.float32],
+                tuple[np.float32, np.float32],
+                tuple[np.float32, np.float32],
+                tuple[np.float32, np.float32],
+            ]
+            | None
+        ) = None
+        self.old_dist = 0
         if num_streets < 2:
             self.vertical_streets = 2
             self.horizontal_streets = 2
         else:
             self.vertical_streets = num_streets
             self.horizontal_streets = num_streets
-
 
         # This will throw a warning in tests/envs/test_envs in utils/env_checker.py as the space is not symmetric
         #   or normalised however this is not possible here so ignore
@@ -271,11 +288,19 @@ class CityDrive(gym.Env, EzPickle):
             self.action_space = spaces.Discrete(5)
             # do nothing, right, left, gas, brake
 
-        self.observation_space = spaces.Dict({
-            "image_array": spaces.Box(low=0, high=255, shape=(STATE_H, STATE_W, 3), dtype=np.uint8), # 255 x 255 image
-            "agent_loc"  : spaces.Box(-PLAYFIELD, PLAYFIELD, shape=(2,), dtype=np.float32),   # [x, y] coordinates
-            "target_loc" : spaces.Box(-PLAYFIELD, PLAYFIELD, shape=(2,), dtype=np.float32)    # [x, y] coordinates
-        })
+        self.observation_space = spaces.Dict(
+            {
+                "image_array": spaces.Box(
+                    low=0, high=255, shape=(STATE_H, STATE_W, 3), dtype=np.uint8
+                ),  # 255 x 255 image
+                "agent_loc": spaces.Box(
+                    low=-PLAYFIELD, high=PLAYFIELD, shape=(2,), dtype=np.float32
+                ),  # [x, y] coordinates
+                "target_loc": spaces.Box(
+                    low=-PLAYFIELD, high=PLAYFIELD, shape=(2,), dtype=np.float32
+                ),  # [x, y] coordinates
+            }
+        )
 
         self.render_mode = render_mode
 
@@ -319,7 +344,23 @@ class CityDrive(gym.Env, EzPickle):
             idx = self.np_random.integers(3)
             self.grass_color[idx] += 20
 
+    # check if a coordinate is inside a polygon
+    def _point_in_poly(self, x, y, poly):
+        # each polygon is made of 4 corners, each corner location is given as xy-coordinates
+        inside = False
+        n = len(poly)  # all road polygons will have 4 points only, so n=4 typically
+        p1x, p1y = poly[0]
+        for i in range(n + 1):
+            p2x, p2y = poly[i % n]
+            if ((p1y > y) != (p2y > y)) and (
+                x < (p2x - p1x) * (y - p1y) / (p2y - p1y) + p1x
+            ):
+                inside = not inside
+            p1x, p1y = p2x, p2y
+        return inside
+
     def _create_track(self):
+
         # Generate a square city-grid.
         # Start is (0,0) and Goal is random intersection.
 
@@ -344,10 +385,10 @@ class CityDrive(gym.Env, EzPickle):
 
         # road segments for entire grid
         self.road = []
-        self.road_poly = [] # vertices for road polygons + color
+        self.road_poly = []  # vertices for road polygons + color
         road_bodies = []
 
-        self.track = [] # race track
+        self.track = []  # race track
 
         # horizontal streets
         for iy in range(GRID_H):
@@ -365,10 +406,22 @@ class CityDrive(gym.Env, EzPickle):
                 beta = math.atan2(y2 - y1, x2 - x1)
 
                 # left/right offsets
-                left1  = (x1 - ROAD_WIDTH * math.sin(beta), y1 + ROAD_WIDTH * math.cos(beta))
-                right1 = (x1 + ROAD_WIDTH * math.sin(beta), y1 - ROAD_WIDTH * math.cos(beta))
-                left2  = (x2 - ROAD_WIDTH * math.sin(beta), y2 + ROAD_WIDTH * math.cos(beta))
-                right2 = (x2 + ROAD_WIDTH * math.sin(beta), y2 - ROAD_WIDTH * math.cos(beta))
+                left1 = (
+                    x1 - ROAD_WIDTH * math.sin(beta),
+                    y1 + ROAD_WIDTH * math.cos(beta),
+                )
+                right1 = (
+                    x1 + ROAD_WIDTH * math.sin(beta),
+                    y1 - ROAD_WIDTH * math.cos(beta),
+                )
+                left2 = (
+                    x2 - ROAD_WIDTH * math.sin(beta),
+                    y2 + ROAD_WIDTH * math.cos(beta),
+                )
+                right2 = (
+                    x2 + ROAD_WIDTH * math.sin(beta),
+                    y2 - ROAD_WIDTH * math.cos(beta),
+                )
 
                 vertices = [left1, right1, right2, left2]
 
@@ -386,7 +439,7 @@ class CityDrive(gym.Env, EzPickle):
                 self.road.append(tile)
                 self.road_poly.append((vertices, tile.color))
 
-        # vertical streets 
+        # vertical streets
         for ix in range(GRID_W):
             for iy in range(GRID_H - 1):
                 x1 = ix * BLOCK
@@ -400,10 +453,22 @@ class CityDrive(gym.Env, EzPickle):
 
                 beta = math.atan2(y2 - y1, x2 - x1)
 
-                left1  = (x1 - ROAD_WIDTH * math.sin(beta), y1 + ROAD_WIDTH * math.cos(beta))
-                right1 = (x1 + ROAD_WIDTH * math.sin(beta), y1 - ROAD_WIDTH * math.cos(beta))
-                left2  = (x2 - ROAD_WIDTH * math.sin(beta), y2 + ROAD_WIDTH * math.cos(beta))
-                right2 = (x2 + ROAD_WIDTH * math.sin(beta), y2 - ROAD_WIDTH * math.cos(beta))
+                left1 = (
+                    x1 - ROAD_WIDTH * math.sin(beta),
+                    y1 + ROAD_WIDTH * math.cos(beta),
+                )
+                right1 = (
+                    x1 + ROAD_WIDTH * math.sin(beta),
+                    y1 - ROAD_WIDTH * math.cos(beta),
+                )
+                left2 = (
+                    x2 - ROAD_WIDTH * math.sin(beta),
+                    y2 + ROAD_WIDTH * math.cos(beta),
+                )
+                right2 = (
+                    x2 + ROAD_WIDTH * math.sin(beta),
+                    y2 - ROAD_WIDTH * math.cos(beta),
+                )
 
                 vertices = [left1, right1, right2, left2]
 
@@ -430,27 +495,24 @@ class CityDrive(gym.Env, EzPickle):
                 nx, ny = x, (iy + 1) * BLOCK if iy < GRID_H - 1 else y
                 beta = math.atan2(ny - y, nx - x)
 
-            alpha = 0.0   # unused
+            alpha = 0.0  # unused
             self.track.append((alpha, beta, x, y))
 
-        # find the tile whose center is closest to the goal intersection
-        closest_idx = None
-        closest_dist = 1e9
-        for i, tile in enumerate(road_bodies):
-            cx = sum(v[0] for v in self.road_poly[i][0]) / 4
-            cy = sum(v[1] for v in self.road_poly[i][0]) / 4
-            dist = (cx - goal_x)**2 + (cy - goal_y)**2
-            if dist < closest_dist:
-                closest_dist = dist
-                closest_idx = i
-
-        # paint goal tile yellow
-        road_bodies[closest_idx].color = np.array([255, 255, 0])
-        poly, _ = self.road_poly[closest_idx]
-        self.road_poly[closest_idx] = (poly, np.array([255, 255, 0]))
-        
         self.start_pos = (start_x, start_y)
         self.end_pos = (goal_x, goal_y)
+        self.old_dist = np.sqrt(
+            (start_x - goal_x) ** 2 + (start_y - goal_y) ** 2
+        )  # inital distance from start to end
+
+        # Define Goal Intersection Polygon
+        GOAL_SIZE = TRACK_WIDTH  # half-size of the square goal area
+
+        left1 = (goal_x - GOAL_SIZE, goal_y + GOAL_SIZE)
+        right1 = (goal_x + GOAL_SIZE, goal_y + GOAL_SIZE)
+        right2 = (goal_x + GOAL_SIZE, goal_y - GOAL_SIZE)
+        left2 = (goal_x - GOAL_SIZE, goal_y - GOAL_SIZE)
+
+        self.end_poly = [left1, right1, right2, left2]
 
         return True
 
@@ -472,6 +534,17 @@ class CityDrive(gym.Env, EzPickle):
         self.t = 0.0
         self.new_lap = False
         self.road_poly = []
+        self.end_pos: tuple[int, int] | None = None
+        # list of coordinates for goal intersection polygon. Default none
+        self.end_poly: (
+            List[
+                tuple[np.float32, np.float32],
+                tuple[np.float32, np.float32],
+                tuple[np.float32, np.float32],
+                tuple[np.float32, np.float32],
+            ]
+            | None
+        ) = None
 
         if self.domain_randomize:
             randomize = True
@@ -495,8 +568,7 @@ class CityDrive(gym.Env, EzPickle):
         if self.render_mode == "human":
             self.render()
         return self.step(None)[0], {}
-    
-    # currently, car is not directly penalized for driving on grass.
+
     def step(self, action: np.ndarray | int):
         assert self.car is not None
         if action is not None:
@@ -511,7 +583,7 @@ class CityDrive(gym.Env, EzPickle):
                         f"you passed the invalid action `{action}`. "
                         f"The supported action_space is `{self.action_space}`"
                     )
-                self.car.steer(-0.6 * (action == 1) + 0.6 * (action == 2))
+                self.car.steer(-1.1 * (action == 1) + 1.1 * (action == 2))
                 self.car.gas(0.2 * (action == 3))
                 self.car.brake(0.8 * (action == 4))
 
@@ -521,46 +593,80 @@ class CityDrive(gym.Env, EzPickle):
 
         self.state = self._render("state_pixels")
 
+        self.steps_taken += 1
+        # added via Claude to create a time urgency
         step_reward = 0
         terminated = False
         truncated = False
         info = {}
-        if action is not None:  # First step without action, called from reset()
-            self.reward -= 0.1
-            # We actually don't want to count fuel spent, we want car to be faster.
-            # self.reward -=  10 * self.car.fuel_spent / ENGINE_POWER
-            self.car.fuel_spent = 0.0
-            step_reward = self.reward - self.prev_reward
-            self.prev_reward = self.reward
-            # if self.tile_visited_count == len(self.track) or self.new_lap:
-            #     # Termination due to finishing lap
-            #     terminated = True
-            #     info["lap_finished"] = True
-            x, y = self.car.hull.position
-            if abs(x) > PLAYFIELD or abs(y) > PLAYFIELD:
+        car_x, car_y = self.car.hull.position
+        # if (action is not None and action is not 0 and action is not 4):
+        # First step without action, called from reset() also makes sure its moving
+        # make sure its not just continuously braking
+
+        # Small reward for moving (action is not 0, do nothing)
+        step_reward -= 0.05  # Claude: bullying :3
+
+        # Distance to goal (shaping)
+        if self.end_pos is not None:
+            new_dist = np.sqrt(
+                (car_x - self.end_pos[0]) ** 2 + (car_y - self.end_pos[1]) ** 2
+            )
+            step_reward += (self.old_dist - new_dist) * 0.5  # reward for progress
+            self.old_dist = new_dist
+
+        # Velocity toward goal (encourages moving in right direction)
+        velocity_toward_goal = self._get_velocity_toward_goal()
+        step_reward += velocity_toward_goal * 0.05
+
+        # Penalty if off road
+        on_road = any(
+            self._point_in_poly(car_x, car_y, poly) for poly, _ in self.road_poly
+        )
+        if not on_road:
+            step_reward -= 0.5
+            # changed from -10 to -0.5 via Claude
+
+        # added via Claude
+        # Reward staying on road
+        if on_road:
+            step_reward += 0.05
+
+        # Penalize excessive steering or braking (smooth driving)
+        if action == 1 or action == 2:  # steering
+            step_reward -= 0.01
+        if action == 4:  # braking
+            step_reward -= 0.02
+
+        # Goal reached
+        goal_radius = TRACK_WIDTH * 4  # check
+        if self.end_pos is not None:
+            new_dist = np.sqrt(
+                (car_x - self.end_pos[0]) ** 2 + (car_y - self.end_pos[1]) ** 2
+            )
+            if new_dist < goal_radius:
+                step_reward += 50
+                # changed from +200 to +50
                 terminated = True
-                info["lap_finished"] = False
-                step_reward = -100
 
-            # if (False): # when car touches grass
-            #     step_reward -= 100 # major penalty
-            #     terminated = True
+        self.prev_reward = step_reward
 
-            # goal check
-            if self.end_pos is not None:
-                # distance squared from goal
-                dist_sq = (self.car.hull.position[0] - self.end_pos[0]) ** 2 + (self.car.hull.position[1] - self.end_pos[1]) ** 2
-                goal_radius = TRACK_WIDTH * 1.2 # check
-                # print(dist_sq,goal_radius)
-                if dist_sq < goal_radius ** 2:
-                    # print("should end now")
-                    step_reward = 1000
-                    self.reward += 1000.0   # goal reward
-                    terminated = True       # end episode
+        # if self.tile_visited_count == len(self.track) or self.new_lap:
+        #     # Termination due to finishing lap
+        #     terminated = True
+        #     info["lap_finished"] = True
+        x, y = self.car.hull.position
+        if abs(x) > PLAYFIELD or abs(y) > PLAYFIELD:
+            terminated = True
+            info["lap_finished"] = False
+            step_reward = -50
+            # changed from -100 to -50
+        # else:
+        #     step_reward -= 1.5  # MOOOOOOVE DO SOMETHING
 
         if self.render_mode == "human":
             self.render()
-        
+
         # print(self.car.hull.position[0],self.car.hull.position[1])
         return self.state, step_reward, terminated, truncated, info
 
@@ -575,6 +681,26 @@ class CityDrive(gym.Env, EzPickle):
             return
         else:
             return self._render(self.render_mode)
+
+    def _get_velocity_toward_goal(self):
+        """Calculate component of velocity toward goal"""
+        if self.end_pos is None:
+            return 0
+
+        car_x, car_y = self.car.hull.position
+        vel_x, vel_y = self.car.hull.linearVelocity
+
+        # Direction to goal
+        goal_dir_x = self.end_pos[0] - car_x
+        goal_dir_y = self.end_pos[1] - car_y
+        dist = np.sqrt(goal_dir_x**2 + goal_dir_y**2)
+
+        if dist > 0:
+            goal_dir_x /= dist
+            goal_dir_y /= dist
+
+        # Dot product: velocity projected onto goal direction
+        return vel_x * goal_dir_x + vel_y * goal_dir_y
 
     def _render(self, mode: str):
         assert mode in self.metadata["render_modes"]
@@ -630,13 +756,17 @@ class CityDrive(gym.Env, EzPickle):
             self.screen.blit(self.surf, (0, 0))
             pygame.display.flip()
         elif mode == "rgb_array":
-            return {"image_array":self._create_image_array(self.surf, (VIDEO_W, VIDEO_H)), 
-                    "agent_loc": (self.car.hull.position[0],self.car.hull.position[1]),
-                    "target_loc" : self.end_pos}
+            return {
+                "image_array": self._create_image_array(self.surf, (VIDEO_W, VIDEO_H)),
+                "agent_loc": (self.car.hull.position[0], self.car.hull.position[1]),
+                "target_loc": self.end_pos,
+            }
         elif mode == "state_pixels":
-            return {"image_array":self._create_image_array(self.surf, (STATE_W, STATE_H)), 
-                    "agent_loc": (self.car.hull.position[0],self.car.hull.position[1]),
-                    "target_loc" : self.end_pos}
+            return {
+                "image_array": self._create_image_array(self.surf, (STATE_W, STATE_H)),
+                "agent_loc": (self.car.hull.position[0], self.car.hull.position[1]),
+                "target_loc": self.end_pos,
+            }
         else:
             return self.isopen
 
@@ -677,6 +807,12 @@ class CityDrive(gym.Env, EzPickle):
             poly = [(p[0], p[1]) for p in poly]
             color = [int(c) for c in color]
             self._draw_colored_polygon(self.surf, poly, color, zoom, translation, angle)
+
+        # coloring goal intersection yellow
+        c_yellow = np.array([255, 255, 0])
+        self._draw_colored_polygon(
+            self.surf, self.end_poly, c_yellow, zoom, translation, angle
+        )
 
     def _render_indicators(self, W, H):
         s = W / 40.0
