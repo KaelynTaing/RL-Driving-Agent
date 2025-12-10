@@ -3,6 +3,7 @@ from stable_baselines3 import DQN
 from autodriving2d.envs import CityDrive
 from stable_baselines3.common.utils import set_random_seed
 import torch
+from tqdm import tqdm
 
 import numpy as np
 
@@ -47,6 +48,6 @@ if __name__ == "__main__":
 
 # Train
 print("trainin..")
-model.learn(total_timesteps=300000)
+model.learn(total_timesteps=300000, log_interval=10, progress_bar=True)
 model.save("dqn_citydrive")
 env.close()
