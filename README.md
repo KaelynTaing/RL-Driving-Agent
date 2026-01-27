@@ -1,5 +1,5 @@
 # Autonomous Driving RL Agent
-Worked with @TheAlex7, @richZ-Z, and @ninjadare for AI 271P in MCS program.
+Worked with [@TheAlex7](https://github.com/TheAlex7), [@richZ-Z](https://github.com/richZ-Z/), and (@ninjadare)[https://github.com/ninjadare] for AI 271P in MCS program.
 
 # Gymnasium Examples
 Some simple examples of Gymnasium environments and wrappers.
