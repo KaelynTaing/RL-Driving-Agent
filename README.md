@@ -1,3 +1,6 @@
+# Autonomous Driving RL Agent
+Worked with @TheAlex7, @richZ-Z, and @ninjadare for AI 271P in MCS program.
+
 # Gymnasium Examples
 Some simple examples of Gymnasium environments and wrappers.
 For some explanations of these examples, see the [Gymnasium documentation](https://gymnasium.farama.org).
