@@ -1,7 +1,8 @@
 # Autonomous Driving RL Agent with Reinforcement Learning
-Worked with [@TheAlex7](https://github.com/TheAlex7), [@richZ-Z](https://github.com/richZ-Z/), and [@ninjadare](https://github.com/ninjadare) for AI 271P in MCS program.
+Worked with [@TheAlex7](https://github.com/TheAlex7), [@richZ-Z](https://github.com/richZ-Z/), and [@ninjadare](https://github.com/ninjadare) for AI 271P in MCS program.\
+Custom Environment based off Box2D's CarRacing simulator compatible with OpenAI's Gymnasium API\
 Demo/Intro Video: https://www.youtube.com/watch?v=hiqOwT89EEY
-
+\
 # Gymnasium Examples
 Some simple examples of Gymnasium environments and wrappers.
 For some explanations of these examples, see the [Gymnasium documentation](https://gymnasium.farama.org).
